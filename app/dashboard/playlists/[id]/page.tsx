@@ -361,7 +361,7 @@ export default function PlaylistDetailPage({ params }: { params: Promise<{ id: s
               Adicionar Mídia
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[600px]">
+          <DialogContent className="w-[95vw] sm:max-w-[760px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Adicionar Conteúdo à Playlist</DialogTitle>
               <DialogDescription>RSS agora é configurado direto no Player. Adicione somente mídias aqui.</DialogDescription>
@@ -389,7 +389,7 @@ export default function PlaylistDetailPage({ params }: { params: Promise<{ id: s
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="max-h-72 overflow-y-auto rounded-md border border-border p-2">
+                <div className="max-h-56 overflow-y-auto rounded-md border border-border p-2">
                   {filteredAssets.length === 0 ? (
                     <p className="p-4 text-center text-sm text-muted-foreground">
                       Nenhuma mídia encontrada com esse filtro.
