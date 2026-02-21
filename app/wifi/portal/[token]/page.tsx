@@ -1,4 +1,5 @@
 ﻿import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
 export const revalidate = 0;
@@ -17,6 +18,7 @@ type AuthOptions = {
 };
 
 type PortalRow = {
+  user_id?: string | null;
   name: string | null;
   html: string | null;
   css: string | null;
@@ -28,11 +30,88 @@ type PortalRow = {
   auth_options?: AuthOptions | null;
 };
 
+type CampaignRow = {
+  id: string;
+  name: string | null;
+  headline: string | null;
+  description: string | null;
+  cta_label: string | null;
+  cta_url: string | null;
+  banner_url: string | null;
+  status: string | null;
+  start_at: string | null;
+  end_at: string | null;
+  priority: number | null;
+  target_auth_providers: string[] | null;
+  target_device_types: string[] | null;
+};
+
+type DeviceType = "mobile" | "tablet" | "desktop";
+
+function inferDeviceType(userAgent: string): DeviceType {
+  const ua = userAgent.toLowerCase();
+  if (/tablet|ipad|playbook|silk/.test(ua)) return "tablet";
+  if (/mobi|android|iphone|ipod|blackberry|iemobile|opera mini/.test(ua)) {
+    return "mobile";
+  }
+  return "desktop";
+}
+
+function inScheduleWindow(campaign: CampaignRow) {
+  if (campaign.status !== "active") return false;
+
+  const now = Date.now();
+  const startAt = campaign.start_at ? new Date(campaign.start_at).getTime() : null;
+  const endAt = campaign.end_at ? new Date(campaign.end_at).getTime() : null;
+
+  if (startAt !== null && startAt > now) return false;
+  if (endAt !== null && endAt < now) return false;
+  return true;
+}
+
+function pickCampaign(
+  campaigns: CampaignRow[],
+  deviceType: DeviceType,
+  authProvider?: string | null,
+) {
+  const provider = (authProvider || "").toLowerCase().trim();
+
+  const eligible = campaigns
+    .filter((campaign) => inScheduleWindow(campaign))
+    .filter((campaign) => {
+      const devices = campaign.target_device_types || [];
+      return devices.length === 0 || devices.includes(deviceType);
+    })
+    .filter((campaign) => {
+      const providers = campaign.target_auth_providers || [];
+      return providers.length === 0 || (provider && providers.includes(provider));
+    });
+
+  if (eligible.length === 0) return undefined;
+
+  const weighted = eligible.map((campaign) => ({
+    campaign,
+    weight: Math.max(Number(campaign.priority || 0), 1),
+  }));
+
+  const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let target = Math.random() * totalWeight;
+
+  for (const item of weighted) {
+    target -= item.weight;
+    if (target <= 0) return item.campaign;
+  }
+
+  return weighted[0].campaign;
+}
+
 function buildAuthTemplate(
   name: string,
   opts: AuthOptions = {},
   assets: { logo?: string | null; background?: string | null; banner?: string | null } = {},
-  theme: "classic" | "modern" = "modern"
+  theme: "classic" | "modern" = "modern",
+  campaign?: CampaignRow | null,
+  portalToken?: string,
 ) {
   const o = {
     cpf: opts.cpf ?? true,
@@ -112,6 +191,27 @@ function buildAuthTemplate(
     ? `<div style="width:100%;height:64px;overflow:hidden;"><img src="${assets.banner}" alt="banner" style="width:100%;height:100%;object-fit:cover;" /></div>`
     : "";
 
+  const campaignHtml = campaign
+    ? `<a class="portal-campaign" href="/api/wifi/campaigns/${campaign.id}/click?portal_token=${portalToken || ""}" target="_blank" rel="noopener noreferrer">
+        ${
+          campaign.banner_url
+            ? `<img src="${campaign.banner_url}" alt="${campaign.name || "Campanha"}" />`
+            : ""
+        }
+        <div class="portal-campaign-body">
+          <p class="portal-campaign-kicker">Oferta</p>
+          <p class="portal-campaign-title">${campaign.headline || campaign.name || "Campanha"}</p>
+          ${
+            campaign.description
+              ? `<p class="portal-campaign-description">${campaign.description}</p>`
+              : ""
+          }
+          <span class="portal-campaign-cta">${campaign.cta_label || "Saiba mais"}</span>
+        </div>
+      </a>
+      <img src="/api/wifi/campaigns/${campaign.id}/impression?portal_token=${portalToken || ""}" alt="" width="1" height="1" style="position:absolute;left:-9999px;" />`
+    : "";
+
   if (theme === "classic") {
     return `
     <style>
@@ -129,6 +229,13 @@ function buildAuthTemplate(
       .classic-icon { width: 20px; height: 20px; border-radius: 4px; background: rgba(255,255,255,.9); color: #1f2937; display: inline-flex; align-items: center; justify-content: center; }
       .classic-btn-label { display: block; text-align: left; white-space: nowrap; }
       .classic-icon svg { width: 14px; height: 14px; display: block; }
+      .portal-campaign { margin: 10px 0 12px; display: block; border-radius: 10px; overflow: hidden; text-decoration: none; background: #fff7ed; border: 1px solid #fdba74; box-shadow: 0 8px 16px rgba(249,115,22,.14); }
+      .portal-campaign img { display: block; width: 100%; height: 90px; object-fit: cover; }
+      .portal-campaign-body { padding: 10px; }
+      .portal-campaign-kicker { margin: 0; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #9a3412; font-weight: 700; }
+      .portal-campaign-title { margin: 4px 0 0; font-size: 13px; color: #7c2d12; font-weight: 700; }
+      .portal-campaign-description { margin: 4px 0 0; font-size: 12px; line-height: 1.35; color: #9a3412; }
+      .portal-campaign-cta { margin-top: 7px; display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; background: #ea580c; color: #fff; font-size: 11px; font-weight: 700; }
       .classic-userpass { margin-top: 10px; border-radius: 10px; background: #101827; color: #fff; padding: 12px; }
       .classic-userpass h3 { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
       .classic-userpass input { width: 100%; height: 38px; border-radius: 6px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.12); color: #fff; margin-bottom: 8px; padding: 0 11px; outline: none; }
@@ -158,6 +265,7 @@ function buildAuthTemplate(
           ${banner}
           <h1 class="classic-title">${name}</h1>
           <p class="classic-subtitle">Faça login em uma rede social para liberar a conexão.</p>
+          ${campaignHtml}
           <div class="classic-register">Registrar-se com:</div>
           <div class="classic-buttons">
             ${buttons
@@ -206,6 +314,13 @@ function buildAuthTemplate(
     .portal-icon-pill { width: 22px; height: 22px; border-radius: 999px; background: rgba(255,255,255,0.22); display: inline-flex; align-items: center; justify-content: center; color: #fff; }
     .portal-btn-label { display: block; text-align: left; white-space: nowrap; }
     .portal-icon-pill svg { width: 14px; height: 14px; display: block; }
+    .portal-campaign { margin: 10px 0 12px; display: block; border-radius: 12px; overflow: hidden; text-decoration: none; background: #fff7ed; border: 1px solid #fdba74; box-shadow: 0 10px 20px rgba(249,115,22,.14); }
+    .portal-campaign img { display: block; width: 100%; height: 110px; object-fit: cover; }
+    .portal-campaign-body { padding: 10px 12px; }
+    .portal-campaign-kicker { margin: 0; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #9a3412; font-weight: 700; }
+    .portal-campaign-title { margin: 4px 0 0; font-size: 13px; color: #7c2d12; font-weight: 700; }
+    .portal-campaign-description { margin: 4px 0 0; font-size: 12px; line-height: 1.35; color: #9a3412; }
+    .portal-campaign-cta { margin-top: 7px; display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; background: #ea580c; color: #fff; font-size: 11px; font-weight: 700; }
     .portal-userpass { margin-top: 10px; border-radius: 12px; background: linear-gradient(145deg, #111827, #1f2937); color: #fff; padding: 14px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
     .portal-userpass h3 { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
     .portal-userpass input { width: 100%; height: 40px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.12); color: #fff; margin: 0 0 8px; padding: 0 12px; outline: none; }
@@ -236,6 +351,7 @@ function buildAuthTemplate(
         ${banner}
         <h1 class="portal-title">${name}</h1>
         <p class="portal-subtitle">Seja bem-vindo(a)! Faça login em uma rede social para liberar a conexão.</p>
+        ${campaignHtml}
         <div class="portal-register">Registrar-se com:</div>
         <div class="portal-buttons">
           ${buttons
@@ -268,19 +384,32 @@ function buildAuthTemplate(
   `;
 }
 
-export default async function PortalPublicPage({ params }: { params: Promise<{ token: string }> }) {
+export default async function PortalPublicPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ token: string }>;
+  searchParams: Promise<{ auth?: string }>;
+}) {
   const { token } = await params;
+  const { auth } = await searchParams;
+  const requestHeaders = await headers();
+  const deviceType = inferDeviceType(requestHeaders.get("user-agent") || "");
   const supabase = await createClient();
   let { data, error } = await supabase
     .from("wifi_portals")
-    .select("name, html, css, theme, status, logo_url, background_url, banner_url, auth_options")
+    .select(
+      "user_id, name, html, css, theme, status, logo_url, background_url, banner_url, auth_options",
+    )
     .eq("token", token)
     .maybeSingle<PortalRow>();
 
   if (error && /theme/i.test(error.message || "")) {
     const fallback = await supabase
       .from("wifi_portals")
-      .select("name, html, css, status, logo_url, background_url, banner_url, auth_options")
+      .select(
+        "user_id, name, html, css, status, logo_url, background_url, banner_url, auth_options",
+      )
       .eq("token", token)
       .maybeSingle<PortalRow>();
     data = fallback.data ? { ...fallback.data, theme: "modern" } : fallback.data;
@@ -289,6 +418,22 @@ export default async function PortalPublicPage({ params }: { params: Promise<{ t
 
   if (error || !data || data.status !== "published") {
     return notFound();
+  }
+
+  let selectedCampaign: CampaignRow | null = null;
+  if (data.user_id) {
+    const campaignsResult = await supabase
+      .from("wifi_campaigns")
+      .select(
+        "id,name,headline,description,cta_label,cta_url,banner_url,status,start_at,end_at,priority,target_auth_providers,target_device_types",
+      )
+      .eq("user_id", data.user_id);
+
+    if (!campaignsResult.error && campaignsResult.data) {
+      selectedCampaign =
+        pickCampaign(campaignsResult.data as CampaignRow[], deviceType, auth || null) ||
+        null;
+    }
   }
 
   const html =
@@ -302,7 +447,9 @@ export default async function PortalPublicPage({ params }: { params: Promise<{ t
             background: data.background_url,
             banner: data.banner_url,
           },
-          data.theme === "classic" ? "classic" : "modern"
+          data.theme === "classic" ? "classic" : "modern",
+          selectedCampaign,
+          token,
         );
   const css = data.css || "";
 
