@@ -1,10 +1,11 @@
 "use client";
 
 import React from "react";
-import { useState, use } from "react";
+import { useState, use, useMemo } from "react";
 import useSWR, { mutate } from "swr";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -103,6 +104,8 @@ export default function PlaylistDetailPage({ params }: { params: Promise<{ id: s
   const { data: assets } = useSWR("assets-for-playlist", assetsFetcher);
   const [addOpen, setAddOpen] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<string>("");
+  const [assetQuery, setAssetQuery] = useState("");
+  const [assetTypeFilter, setAssetTypeFilter] = useState<"all" | "image" | "video">("all");
   const [duration, setDuration] = useState("10");
   const [validFrom, setValidFrom] = useState<string>("");
   const [validUntil, setValidUntil] = useState<string>("");
@@ -112,6 +115,22 @@ export default function PlaylistDetailPage({ params }: { params: Promise<{ id: s
   const [editingItem, setEditingItem] = useState<PlaylistItem | null>(null);
   const [editValidFrom, setEditValidFrom] = useState<string>("");
   const [editValidUntil, setEditValidUntil] = useState<string>("");
+
+  const filteredAssets = useMemo(() => {
+    if (!assets) return [];
+
+    return assets.filter((asset) => {
+      const typeOk = assetTypeFilter === "all" || asset.type === assetTypeFilter;
+      const query = assetQuery.trim().toLowerCase();
+      const textOk = !query || asset.name.toLowerCase().includes(query);
+      return typeOk && textOk;
+    });
+  }, [assets, assetQuery, assetTypeFilter]);
+
+  const selectedAssetData = useMemo(
+    () => assets?.find((asset) => asset.id === selectedAsset),
+    [assets, selectedAsset],
+  );
 
   const handleAddItem = async () => {
     if (!selectedAsset) return;
@@ -142,9 +161,8 @@ export default function PlaylistDetailPage({ params }: { params: Promise<{ id: s
       mutate(`/api/playlists/${id}`);
       setAddOpen(false);
       setSelectedAsset("");
-      setSelectedRssFeed("");
-      setRssUrl("");
-      setRssSource("saved");
+      setAssetQuery("");
+      setAssetTypeFilter("all");
       setDuration("10");
       setValidFrom("");
       setValidUntil("");
@@ -351,25 +369,84 @@ export default function PlaylistDetailPage({ params }: { params: Promise<{ id: s
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Mídia</Label>
-                <Select value={selectedAsset} onValueChange={setSelectedAsset}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione uma mídia" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {assets?.map((asset) => (
-                      <SelectItem key={asset.id} value={asset.id}>
-                        <div className="flex items-center gap-2">
-                          {asset.type === "video" ? (
-                            <Film className="h-4 w-4" />
-                          ) : (
-                            <ImageIcon className="h-4 w-4" />
-                          )}
-                          {asset.name}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_160px]">
+                  <Input
+                    placeholder="Buscar mídia por nome..."
+                    value={assetQuery}
+                    onChange={(e) => setAssetQuery(e.target.value)}
+                  />
+                  <Select
+                    value={assetTypeFilter}
+                    onValueChange={(value) => setAssetTypeFilter(value as "all" | "image" | "video")}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      <SelectItem value="image">Imagens</SelectItem>
+                      <SelectItem value="video">Vídeos</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="max-h-72 overflow-y-auto rounded-md border border-border p-2">
+                  {filteredAssets.length === 0 ? (
+                    <p className="p-4 text-center text-sm text-muted-foreground">
+                      Nenhuma mídia encontrada com esse filtro.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {filteredAssets.map((asset) => {
+                        const isSelected = selectedAsset === asset.id;
+                        return (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            onClick={() => setSelectedAsset(asset.id)}
+                            className={cn(
+                              "overflow-hidden rounded-md border text-left transition hover:border-orange-400 hover:bg-orange-50/30",
+                              isSelected ? "border-orange-500 ring-1 ring-orange-400" : "border-border",
+                            )}
+                          >
+                            <div className="relative aspect-video bg-muted">
+                              {asset.type === "image" ? (
+                                <img
+                                  src={asset.url || "/placeholder.svg"}
+                                  alt={asset.name}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center">
+                                  <Film className="h-6 w-6 text-muted-foreground" />
+                                </div>
+                              )}
+                              <div className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                                {asset.type === "video" ? "Vídeo" : "Imagem"}
+                              </div>
+                            </div>
+                            <div className="p-2">
+                              <p className="line-clamp-2 text-xs font-medium leading-tight">
+                                {asset.name}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                {selectedAssetData ? (
+                  <div className="flex items-center gap-2 rounded-md border border-orange-300 bg-orange-50 px-3 py-2 text-xs text-slate-700">
+                    {selectedAssetData.type === "video" ? (
+                      <Film className="h-4 w-4" />
+                    ) : (
+                      <ImageIcon className="h-4 w-4" />
+                    )}
+                    <span className="truncate">
+                      Selecionada: <strong>{selectedAssetData.name}</strong>
+                    </span>
+                  </div>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="duration">Duração (segundos)</Label>
